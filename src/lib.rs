@@ -163,14 +163,26 @@ pub trait FromHex: Sized {
 }
 
 fn val(c: u8, idx: usize) -> Result<u8, FromHexError> {
-    match c {
-        b'A'..=b'F' => Ok(c - b'A' + 10),
-        b'a'..=b'f' => Ok(c - b'a' + 10),
-        b'0'..=b'9' => Ok(c - b'0'),
-        _ => Err(FromHexError::InvalidHexCharacter {
+    const ASCII_0: u16 = '0' as u16;
+    const ASCII_A: u16 = 'A' as u16;
+    const ASCII_F: u16 = 'F' as u16;
+
+    let c16 = c as u16;
+    let c_dec = c16 ^ ASCII_0; // extract 0..9
+    let c_hex = c16 & 0xdf;    // convert to uppercase A..F
+
+    let dec_mask = c_dec.wrapping_sub(10) >> 8;
+    let hex_mask = (c_hex.wrapping_sub(ASCII_A) ^ c_hex.wrapping_sub(ASCII_F + 1)) >> 8;
+
+    if dec_mask == 0 && hex_mask == 0 {
+        Err(FromHexError::InvalidHexCharacter {
             c: c as char,
             index: idx,
-        }),
+        })
+    } else {
+        let a = dec_mask & c_dec;
+        let b = hex_mask & c_hex.wrapping_sub(ASCII_A - 10);
+        Ok(a.wrapping_add(b) as u8)
     }
 }
 
@@ -391,6 +403,24 @@ mod test {
             encode_to_slice(b"kiwis", &mut output_3),
             Err(FromHexError::InvalidStringLength)
         );
+    }
+
+    #[test]
+    pub fn test_val() {
+        for c in 0..255 {
+            let expected = match c {
+                b'A'..=b'F' => Ok(c - b'A' + 10),
+                b'a'..=b'f' => Ok(c - b'a' + 10),
+                b'0'..=b'9' => Ok(c - b'0'),
+                _ => Err(FromHexError::InvalidHexCharacter {
+                    c: c as char,
+                    index: 0,
+                }),
+            };
+
+            let result = val(c, 0);
+            assert_eq!(result, expected);
+        }
     }
 
     #[test]
